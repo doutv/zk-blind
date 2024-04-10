@@ -14,6 +14,16 @@ ts-node scripts/generate_input.ts
 ```
 
 ## circuits
+```sh
+# Prepare the environment
+source ~/.rapidsnark
+
+# export LD_LIBRARY_PATH=/home/okxdex/data/zkdex-pap/services/rapidsnark/depends/pistache/build/src
+# alias proverServer=/home/okxdex/data/zkdex-pap/services/rapidsnark/build_nodejs/proverServer
+# alias prover=/home/okxdex/data/zkdex-pap/workspace/cliff/rapidsnark/package/bin/prover
+# export REQ=/home/okxdex/data/zkdex-pap/services/rapidsnark/tools/request.js
+# export PTAU=/home/okxdex/data/zkdex-pap/workspace/cliff/zkdex-plonky2-circom-poc/circom/e2e_tests/powersOfTau28_hez_final_24.ptau
+```
 
 These circuits check for (1) valid rsa signature, (2) that the message is a JWT, (3) ownership of a specific email domain, and (4) JWT expiration.
 
@@ -30,17 +40,41 @@ make sure to edit the input json file name to the correct input file you generat
 
 phase 2 and getting full zkey + vkey
 ```
-snarkjs groth16 setup ./build/jwt/jwt.r1cs ./circuits/powersOfTau28_hez_final_22.ptau ./build/jwt/jwt_single.zkey
+snarkjs groth16 setup ./build/jwt/jwt.r1cs $PTAU ./build/jwt/jwt_single.zkey
 
 snarkjs zkey contribute ./build/jwt/jwt_single.zkey ./build/jwt/jwt_single1.zkey --name="1st Contributor Name" -v
 
 snarkjs zkey export verificationkey ./build/jwt/jwt_single1.zkey ./build/jwt/verification_key.json
-
 ```
 
-generate proof
+### Generate Proof
+snarkjs
+```sh
+snarkjs groth16 prove ./build/jwt/jwt_single1.zkey ./build/jwt/witness.wtns ./build/jwt/proof.json ./build/jwt/public.json;
 ```
-snarkjs groth16 prove ./build/jwt/jwt_single1.zkey ./build/jwt/witness.wtns ./build/jwt/proof.json ./build/jwt/public.json
+
+rapidsnark standalone mode
+```sh
+prover ./build/jwt/jwt_single1.zkey ./build/jwt/witness.wtns ./build/jwt/proof.json ./build/jwt/public.json;
+```
+
+rapidsnark server mode
+```sh
+# build cpp
+cd build/jwt/jwt_cpp
+make
+cd ../..
+cp ./build/jwt/jwt ./build/jwt_single1
+
+# Copy witness
+cp ./build/jwt/witness.wtns ./build/jwt_single1.wtns
+
+# Start a new terminal and run the prover server
+proverServer 9080 ./build/jwt/jwt_single1.zkey
+
+# Request the prover server
+# params: <input.json> <circuit_name>
+node $REQ ./build/input_jwt_single1.json jwt_single1;
 ```
 
 verify proof offchain
@@ -61,6 +95,35 @@ npx hardhat test ./test/blind.test.js
 deploy blind and verifier contracts
 ```
 npx hardhat run ./scripts/deploy.js --network goerli
+```
+
+### Benchmark Different Prover
+```sh
+./shell_scripts/benchmark.sh
+```
+```
+========== GPU RapidSnark standalone prove  ==========
+/home/okxdex/data/zkdex-pap/services/rapidsnark/build_prover_gpu/src/prover ./build/jwt/jwt_single1.zkey ./build/jwt/witness.wtns ./build/jwt/proof.json ./build/jwt/public.json
+mem 1800 MB
+time 1.400000 s
+cpu 364 
+========== RapidSnark standalone prove  ==========
+/home/okxdex/data/zkdex-pap/services/rapidsnark/build_prover/src/prover ./build/jwt/jwt_single1.zkey ./build/jwt/witness.wtns ./build/jwt/proof.json ./build/jwt/public.json
+mem 2145 MB
+time 1.623000 s
+cpu 3755 
+========== Should run proverServer in advance ==========
+========== RapidSnark server prove  ==========
+node /home/okxdex/data/zkdex-pap/services/rapidsnark/tools/request.js ./build/input_jwt_single1.json jwt_single1
+mem 52 MB
+time 2.151000 s
+cpu 47 
+========== SnarkJS prove  ==========
+snarkjs groth16 prove ./build/jwt/jwt_single1.zkey ./build/jwt/witness.wtns ./build/jwt/proof.json ./build/jwt/public.json
+mem 9000 MB
+time 13.533000 s
+cpu 567 
+Proof size: 804
 ```
 
 ## on-chain verification
