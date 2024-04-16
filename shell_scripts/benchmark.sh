@@ -1,9 +1,19 @@
 #!/bin/bash
+set -e
 
-TIME=(/usr/bin/time -f "mem %M\ntime %e\ncpu %P")
 CIRCUIT_NAME=jwt
 BUILD_DIR="./build/$CIRCUIT_NAME"
+# Sample directory structure after building
+# build
+# ├── jwt
+# │   ├── jwt_cpp
+# │   ├── jwt.zkey
+# │   ├── witness.wtns
+# │   ├── input.json
+# │   ├── proof.json
+# │   └── public.json
 
+SAMPLE_SIZE=20
 RS_PATH=/home/okxdex/data/zkdex-pap/services/rapidsnark
 prover=${RS_PATH}/build_prover/src/prover
 proverServer=${RS_PATH}/build_nodejs/proverServer
@@ -12,9 +22,8 @@ REQ=${RS_PATH}/tools/request.js
 export LD_LIBRARY_PATH=${RS_PATH}/depends/pistache/build/src
 
 avg_time() {
-    #
     # usage: avg_time n command ...
-    #
+    TIME=(/usr/bin/time -f "mem %M\ntime %e\ncpu %P")
     n=$1; shift
     (($# > 0)) || return                   # bail if no command given
     echo "$@"
@@ -33,54 +42,67 @@ avg_time() {
 }
 
 function SnarkJS() {
-  avg_time 10 snarkjs groth16 prove "$BUILD_DIR"/jwt_single1.zkey "$BUILD_DIR"/witness.wtns "$BUILD_DIR"/proof.json "$BUILD_DIR"/public.json
-  proof_size=$(ls -lh "$BUILD_DIR"/proof.json | awk '{print $5}')
+  pushd "$BUILD_DIR" > /dev/null
+  avg_time $SAMPLE_SIZE snarkjs groth16 prove "$CIRCUIT_NAME".zkey witness.wtns proof.json public.json
+  proof_size=$(ls -lh proof.json | awk '{print $5}')
   echo "Proof size: $proof_size"
+  popd > /dev/null
 }
 
 function RapidStandalone() {
-  avg_time 10 ${prover} "$BUILD_DIR"/jwt_single1.zkey "$BUILD_DIR"/witness.wtns "$BUILD_DIR"/proof.json "$BUILD_DIR"/public.json
+  pushd "$BUILD_DIR" > /dev/null
+  avg_time $SAMPLE_SIZE ${prover} "$CIRCUIT_NAME".zkey witness.wtns proof.json public.json
+  popd > /dev/null
 }
 
 function GPURapidStandalone() {
-  avg_time 10 ${GPUProver} "$BUILD_DIR"/jwt_single1.zkey "$BUILD_DIR"/witness.wtns "$BUILD_DIR"/proof.json "$BUILD_DIR"/public.json
+  pushd "$BUILD_DIR" > /dev/null
+  avg_time $SAMPLE_SIZE ${GPUProver} "$CIRCUIT_NAME".zkey witness.wtns proof.json public.json
+  popd > /dev/null
 }
 
 function RapidServer() {
-  # cd ./build/jwt/jwt_cpp
-  # make
-  # cd ../../..
-  # cp ./build/jwt/jwt ./build/jwt_single1
+  pushd "$BUILD_DIR" > /dev/null
 
-  # # Copy witness
-  # cp ./build/jwt/witness.wtns ./build/jwt_single1.wtns
+  # Build circuit cpp
+  mkdir -p build
+  pushd "$CIRCUIT_NAME"_cpp/ > /dev/null
+  make -j12
+  cp "$CIRCUIT_NAME" ../build/
+  popd > /dev/null
 
+  # Copy witness and input
+  cp witness.wtns ./build/"$CIRCUIT_NAME".wtns
+  # input.json should be in the build directory
+  cp input.json ./build/input_"$CIRCUIT_NAME".json
+
+  # Kill the proverServer if it is running on 9080 port
+  kill -9 $(lsof -t -i:9080) > /dev/null 2>&1 || true
   # Start the prover server in the background
-  ${proverServer} 9080 ./build/jwt/jwt_single1.zkey > /dev/null 2>&1 &
-
+  ${proverServer} 9080 "$CIRCUIT_NAME".zkey > /dev/null 2>&1 &
   # Save the PID of the proverServer to kill it later
   PROVER_SERVER_PID=$!
-
   # Give the server some time to start
   sleep 0.5
 
-  for i in {1..10}
-  do
-    node ${REQ} ./build/input_jwt_single1.json jwt_single1 > /dev/null 2>&1
-  done
+  # Run the prover client and get the average time
+  avg_t=$(avg_time $SAMPLE_SIZE node ${REQ} ./build/input_$CIRCUIT_NAME.json $CIRCUIT_NAME | grep "time")
 
-  ps -p `pidof proverServer` -o %cpu,vsz | awk 'NR>1 {$2=int($2/1024)"M";}{ print;}'
+  # Get prover server CPU and memory usage
+  ps_output=$(ps -p `pidof proverServer` -o %cpu,vsz --no-headers)
+  avg_cpu=$(echo $ps_output | awk '{print $1"%"}')
+  avg_mem=$(echo $ps_output | awk '{$2=int($2/1024)"M"; print $2}')
+
+  echo mem ${avg_mem}
+  echo ${avg_t}
+  echo cpu ${avg_cpu}
 
   # Kill the proverServer
   kill $PROVER_SERVER_PID
+  popd > /dev/null
 }
 
-function verify() {
-  avg_time 10 snarkjs groth16 verify "$BUILD_DIR"/verification_key.json "$BUILD_DIR"/public.json "$BUILD_DIR"/proof.json
-}
-
-# echo "========== Verify  =========="
-# verify
+echo "Sample Size =" $SAMPLE_SIZE
 
 echo "========== GPU RapidSnark standalone prove  =========="
 GPURapidStandalone
