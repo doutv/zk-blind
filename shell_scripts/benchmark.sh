@@ -19,7 +19,7 @@ avg_time() {
     (($# > 0)) || return                   # bail if no command given
     echo "$@"
     for ((i = 0; i < n; i++)); do
-        "${TIME[@]}" "$@" 2>&1 
+        "${TIME[@]}" "$@" 2>&1
         # | tee /dev/stderr
     done | awk '
         /^mem [0-9]+/ { mem = mem + $2; nm++ }
@@ -55,19 +55,24 @@ function RapidServer() {
   # # Copy witness
   # cp ./build/jwt/witness.wtns ./build/jwt_single1.wtns
 
-  # # Start the prover server in the background
-  # ${proverServer} 9080 ./build/jwt/jwt_single1.zkey &
+  # Start the prover server in the background
+  ${proverServer} 9080 ./build/jwt/jwt_single1.zkey > /dev/null 2>&1 &
 
-  # # Save the PID of the proverServer to kill it later
-  # PROVER_SERVER_PID=$!
+  # Save the PID of the proverServer to kill it later
+  PROVER_SERVER_PID=$!
 
-  # # Give the server some time to start
-  # sleep 5
+  # Give the server some time to start
+  sleep 0.5
 
-  avg_time 10 node ${REQ} ./build/input_jwt_single1.json jwt_single1
+  for i in {1..10}
+  do
+    node ${REQ} ./build/input_jwt_single1.json jwt_single1 > /dev/null 2>&1
+  done
+
+  ps -p `pidof proverServer` -o %cpu,vsz | awk 'NR>1 {$2=int($2/1024)"M";}{ print;}'
 
   # Kill the proverServer
-  # kill $PROVER_SERVER_PID
+  kill $PROVER_SERVER_PID
 }
 
 function verify() {
