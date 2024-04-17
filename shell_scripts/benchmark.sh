@@ -1,4 +1,6 @@
 #!/bin/bash
+# Single thread: sudo systemd-run --scope -p CPUQuota=100% ./shell_scripts/benchmark.sh
+
 set -e
 
 CIRCUIT_NAME=jwt
@@ -13,7 +15,9 @@ BUILD_DIR="./build/$CIRCUIT_NAME"
 # │   ├── proof.json
 # │   └── public.json
 
-SAMPLE_SIZE=20
+SAMPLE_SIZE=10
+NODE=/home/okxdex/.nvm/versions/node/v21.6.2/bin/node
+SNARKJS=/home/okxdex/.nvm/versions/node/v21.6.2/bin/snarkjs
 RS_PATH=/home/okxdex/data/zkdex-pap/services/rapidsnark
 prover=${RS_PATH}/build_prover/src/prover
 proverServer=${RS_PATH}/build_nodejs/proverServer
@@ -43,7 +47,7 @@ avg_time() {
 
 function SnarkJS() {
   pushd "$BUILD_DIR" > /dev/null
-  avg_time $SAMPLE_SIZE snarkjs groth16 prove "$CIRCUIT_NAME".zkey witness.wtns proof.json public.json
+  avg_time $SAMPLE_SIZE ${NODE} ${SNARKJS} groth16 prove "$CIRCUIT_NAME".zkey witness.wtns proof.json public.json
   proof_size=$(ls -lh proof.json | awk '{print $5}')
   echo "Proof size: $proof_size"
   popd > /dev/null
@@ -86,7 +90,7 @@ function RapidServer() {
   sleep 0.5
 
   # Run the prover client and get the average time
-  avg_t=$(avg_time $SAMPLE_SIZE node ${REQ} ./build/input_$CIRCUIT_NAME.json $CIRCUIT_NAME | grep "time")
+  avg_t=$(avg_time $SAMPLE_SIZE ${NODE} ${REQ} ./build/input_$CIRCUIT_NAME.json $CIRCUIT_NAME | grep "time")
 
   # Get prover server CPU and memory usage
   ps_output=$(ps -p `pidof proverServer` -o %cpu,vsz --no-headers)
@@ -110,7 +114,6 @@ GPURapidStandalone
 echo "========== RapidSnark standalone prove  =========="
 RapidStandalone
 
-echo "========== Should run proverServer in advance =========="
 echo "========== RapidSnark server prove  =========="
 RapidServer
 
